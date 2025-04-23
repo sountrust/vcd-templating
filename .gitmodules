@@ -1,0 +1,6 @@
+[submodule "terraform/vcd-cataloging"]
+	path = terraform/vcd-cataloging
+	url = git@github.com:sountrust/vcd-cataloging.git
+[submodule "terraform/vcd-networking"]
+	path = terraform/vcd-networking
+	url = git@github.com:sountrust/vcd-networking.git
