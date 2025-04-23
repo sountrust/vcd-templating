@@ -1,0 +1,30 @@
+#cloud-config
+hostname: ${hostname}
+timezone: "Europe/Paris"
+users:
+  - default
+  - name: cloud-user
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    groups: [sudo]
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh_rsa key your_key
+manage_resolv_conf: true
+keyboard:
+  layout: fr
+  variant: ''
+packages:
+  - python3-pip
+  - jq
+
+# DNS resolution
+write_files:
+  - path: /etc/systemd/resolved.conf
+    content: |
+      [Resolve]
+      DNS=8.8.8.8 8.8.4.4
+
+runcmd:
+  - systemctl restart systemd-resolved
+
+final_message: "DNS and user configuration completed"

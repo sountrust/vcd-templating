@@ -1,0 +1,8 @@
+- name: Reset cloud-init on VMs
+  hosts: all  # Update to target the specific VMs you want to reset
+  remote_user: cloud-user
+  become: true 
+  tasks:
+    - name: Run cloud-init clean
+      shell: cloud-init clean
+      ignore_errors: yes  # Ignore errors if cloud-init is not installed

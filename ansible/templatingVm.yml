@@ -1,0 +1,152 @@
+- name: "Prepare Ubuntu VM before templating"
+  hosts: all
+  remote_user: cloud-user
+  become: true
+  gather_facts: yes
+  tasks:
+
+    - name: Update and upgrade apt packages
+      ansible.builtin.apt:
+        upgrade: yes
+        update_cache: yes
+      retries: 3
+      delay: 30
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+      retries: 3
+      delay: 30
+
+    - name: Check if the file exists
+      ansible.builtin.stat:
+        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      register: keyring_stat
+
+    - name: Download the public signing key for the Kubernetes package repositories and run gpg to dearmor the key if the file doesn't exist
+      ansible.builtin.shell:
+        cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      retries: 3
+      delay: 30
+      when: not keyring_stat.stat.exists
+
+    - name: Set reboot required fact
+      ansible.builtin.set_fact:
+        reboot_required: true
+
+    - name: Reboot the VM after initial setup
+      ansible.builtin.reboot:
+      when: reboot_required
+      become: true
+
+    - name: Wait for VM to become reachable after initial reboot
+      wait_for_connection:
+        delay: 10
+        timeout: 300
+
+    - name: Continue with tasks after reboot
+      block:
+        - name: Update and upgrade apt packages
+          ansible.builtin.apt:
+            upgrade: yes
+            update_cache: yes
+          retries: 3
+          delay: 30
+      when: reboot_required  # Only execute these tasks if a reboot was performed
+
+    - name: Remove Docker if it exists
+      ansible.builtin.apt:
+        name: docker.io
+        state: absent
+      ignore_errors: yes
+
+    - name: Install containerd
+      ansible.builtin.apt:
+        name: containerd
+        state: present
+      retries: 3
+      delay: 30
+
+    - name: Configure containerd
+      ansible.builtin.shell: |
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Restart containerd to apply new configuration
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+
+    - name: Add the appropriate Kubernetes APT repository
+      ansible.builtin.shell:
+        cmd: 'echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list'
+      retries: 3
+      delay: 30
+
+    - name: Update the apt package index, install kubelet, kubeadm, and kubectl, and pin their version
+      ansible.builtin.apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        update_cache: yes
+      retries: 3
+      delay: 30
+
+    - name: Hold kubelet, kubeadm, and kubectl at the current version
+      ansible.builtin.apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: fixed 
+   
+    - name: Ensure containerd config SystemdCgroup is set to true
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^\s*SystemdCgroup\s*=\s*false\s*$'
+        line: '            SystemdCgroup = true'
+        state: present
+        backrefs: yes
+
+    - name: Disable AppArmor in containerd config
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^(\s*disable_apparmor\s*=\s*)false'
+        line: '    disable_apparmor = true'
+        backrefs: yes
+
+    - name: Ensure IP forwarding is enabled on boot
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.ip_forward=1'
+        state: present
+    
+    - name: Ensure br_netfilter module is loaded on boot
+      ansible.builtin.lineinfile:
+        path: /etc/modules-load.d/modules.conf
+        line: 'br_netfilter'
+        state: present
+    
+    - name: Ensure bridge-nf-call-iptables is enabled on boot
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.bridge.bridge-nf-call-iptables=1'
+        state: present
+
+    - name: Copy kubelet configuration file to the node
+      copy:
+        src: 'kubelet-config.yaml'
+        dest: '/var/lib/kubelet/config.yaml'
+        owner: root
+        group: root
+        mode: '0644'
